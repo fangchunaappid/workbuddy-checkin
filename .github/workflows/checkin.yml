@@ -2,7 +2,7 @@ name: WorkBuddy daily checkin
 
 on:
   schedule:
-    - cron: "0 0 * * *"   # UTC 00:00 = 北京时间 08:00
+    - cron: "5 16 * * *"   # UTC 16:05 = 北京时间 00:05
   workflow_dispatch:
 
 jobs:
