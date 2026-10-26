@@ -1,0 +1,29 @@
+name: WorkBuddy daily checkin
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # UTC 00:00 = 北京时间 08:00
+  workflow_dispatch:
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore tokens from secret
+        env:
+          WB_TOKENS_B64: ${{ secrets.WB_TOKENS_B64 }}
+        run: echo "$WB_TOKENS_B64" | base64 -d > wb_tokens.json
+
+      - name: Run daily checkin
+        run: python wb_daily.py wb_tokens.json
+
+      - name: Remove tokens
+        if: always()
+        run: rm -f wb_tokens.json
