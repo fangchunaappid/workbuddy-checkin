@@ -144,7 +144,7 @@ def run_account(acc):
 
 def feishu_push(results):
     """把签到汇总推送到飞书群机器人，返回 (ok, note)。"""
-    today = datetime.date.today().strftime("%Y-%m-%d %A")
+    today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %A")
     lines = ["📋 WorkBuddy 每日签到报告", "🗓 %s" % today, "——————————————"]
     errs = []
     for i, r in enumerate(results, 1):
