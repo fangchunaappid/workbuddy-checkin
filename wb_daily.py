@@ -170,7 +170,7 @@ def feishu_push(results):
     warns = []
     for r in results:
         t = r.get("token") or {}
-        if t.get("days_left") is not None and t["days_left"] <= 1:
+        if t.get("days_left") is not None and t["days_left"] < 2:
             warns.append("%s 的登录令牌将于 %s 过期（剩 %.1f 天）" % (
                 acc_name(r.get("uid", "?")), t.get("exp"), t["days_left"]))
     # 全部账号均为「今日已签」且无异常、无预警时跳过推送，避免 GitHub schedule 兜底运行造成重复推送
