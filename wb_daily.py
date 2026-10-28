@@ -144,6 +144,10 @@ def run_account(acc):
 
 def feishu_push(results):
     """把签到汇总推送到飞书群机器人，返回 (ok, note)。"""
+    # 全部账号均为「今日已签」且无异常时跳过推送，避免 GitHub schedule 兜底运行造成重复推送
+    if results and all(r.get("status") == "ok" and r.get("action") != "checked_in" for r in results):
+        print("skip push: all accounts already checked in today")
+        return False, "skipped (all already checked in)"
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %A")
     lines = ["📋 WorkBuddy 每日签到报告", "🗓 %s" % today, "——————————————"]
     errs = []
