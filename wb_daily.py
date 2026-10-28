@@ -4,7 +4,7 @@
 tokens.json: [{"uid":"...","accessToken":"..."}, ...]
 输出: JSON 数组，每账号一条 {uid, status, action, points, balance, streak, travel, msg}
 """
-import json, sys, urllib.request, urllib.error, random, datetime
+import json, sys, urllib.request, urllib.error, random, datetime, base64
 
 CHECKIN_HOST = "https://www.codebuddy.cn"
 TRAVEL_HOST = "https://www.workbuddy.cn"
@@ -19,6 +19,23 @@ NAMES = {
 
 def acc_name(uid):
     return NAMES.get(uid[:8], uid[:8])
+
+def token_info(token):
+    """解析 accessToken 过期信息：JWT 直接读 exp 得出剩余天数；其他类型无法预测。"""
+    try:
+        parts = token.split(".")
+        if len(parts) == 3:
+            payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+            exp = payload.get("exp")
+            if exp:
+                now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+                left = (float(exp) - now) / 86400.0
+                exp_bjt = datetime.datetime.fromtimestamp(float(exp), datetime.timezone(datetime.timedelta(hours=8)))
+                return {"type": "jwt", "exp": exp_bjt.strftime("%Y-%m-%d %H:%M"), "days_left": round(left, 1)}
+            return {"type": "jwt-noexp"}
+    except Exception:
+        pass
+    return {"type": "opaque"}
 
 def api(url, token, body=None, method=None):
     data = json.dumps(body).encode() if body is not None else None
@@ -102,6 +119,7 @@ def travel_flow(token):
 def run_account(acc):
     uid, token = acc.get("uid", "?"), acc.get("accessToken", "")
     out = {"uid": uid, "status": "error", "msg": ""}
+    out["token"] = token_info(token)
     if not token:
         out["msg"] = "缺少 accessToken"
         return out
@@ -115,6 +133,10 @@ def run_account(acc):
             out["msg"] = "签到状态查询失败 HTTP %s %s" % (sc, str(s)[:80])
         return out
     sd = s["data"]
+    # 状态接口若返回过期类字段，记录到结果（日志诊断用，不含敏感值）
+    for k, v in sd.items():
+        if any(w in k.lower() for w in ("expire", "expiry", "deadline")):
+            out.setdefault("expire_fields", {})[k] = v
     out["streak"] = sd.get("streak_days")
     out["balance"] = sd.get("total_credits")
     if sd.get("today_checked_in"):
@@ -144,8 +166,15 @@ def run_account(acc):
 
 def feishu_push(results):
     """把签到汇总推送到飞书群机器人，返回 (ok, note)。"""
-    # 全部账号均为「今日已签」且无异常时跳过推送，避免 GitHub schedule 兜底运行造成重复推送
-    if results and all(r.get("status") == "ok" and r.get("action") != "checked_in" for r in results):
+    # 令牌过期预警：剩余不足 2 天（即明天或今天到期）时提醒
+    warns = []
+    for r in results:
+        t = r.get("token") or {}
+        if t.get("days_left") is not None and t["days_left"] <= 1:
+            warns.append("%s 的登录令牌将于 %s 过期（剩 %.1f 天）" % (
+                acc_name(r.get("uid", "?")), t.get("exp"), t["days_left"]))
+    # 全部账号均为「今日已签」且无异常、无预警时跳过推送，避免 GitHub schedule 兜底运行造成重复推送
+    if results and not warns and all(r.get("status") == "ok" and r.get("action") != "checked_in" for r in results):
         print("skip push: all accounts already checked in today")
         return False, "skipped (all already checked in)"
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %A")
@@ -178,6 +207,8 @@ def feishu_push(results):
             lines.append("%d. %s：❌ %s" % (i, name, msg))
             errs.append(name)
     lines.append("——————————————")
+    if warns:
+        lines.append("⏰ %s，请尽快重新提取 accessToken 并更新 GitHub Secret！" % "；".join(warns))
     if errs:
         lines.append("⚠️ 异常账号：%s，请关注！" % "、".join(errs))
     else:
