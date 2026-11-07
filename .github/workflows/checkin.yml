@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: "5 16 * * *"   # UTC 16:05 = 北京时间 00:05
   workflow_dispatch:
+  push:
 
 # 串行：同时只有一条运行，其余排队，避免 cron-job 触发与 schedule 兜底并发签到
 concurrency:
