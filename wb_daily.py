@@ -4,11 +4,12 @@
 tokens.json: [{"uid":"...","accessToken":"..."}, ...]
 输出: JSON 数组，每账号一条 {uid, status, action, points, balance, streak, travel, msg}
 """
-import json, sys, urllib.request, urllib.error, random, datetime, base64
+import json, os, sys, urllib.request, urllib.error, random, datetime, base64
 
 CHECKIN_HOST = "https://www.codebuddy.cn"
 TRAVEL_HOST = "https://www.workbuddy.cn"
-FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/REDACTED"
+# 飞书群机器人 webhook 从环境变量 / GitHub Secret 读取，避免仓库公开后泄露
+FEISHU_WEBHOOK = os.environ.get("FEISHU_WEBHOOK", "").strip()
 
 # uid 前缀 -> 昵称（用于推送消息可读性，来源：WorkDaddy /api/accounts 权威数据）
 NAMES = {
@@ -166,6 +167,9 @@ def run_account(acc):
 
 def feishu_push(results):
     """把签到汇总推送到飞书群机器人，返回 (ok, note)。"""
+    if not FEISHU_WEBHOOK:
+        print("skip push: FEISHU_WEBHOOK not configured")
+        return False, "skipped (no FEISHU_WEBHOOK)"
     # 令牌过期预警：剩余不足 2 天（即明天或今天到期）时提醒
     warns = []
     for r in results:
