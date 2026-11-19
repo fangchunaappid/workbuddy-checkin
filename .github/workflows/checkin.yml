@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "5 16 * * *"   # UTC 16:05 = 北京时间 00:05
   workflow_dispatch:
+    inputs:
+      force_push:
+        description: "强制推送飞书（忽略「今日已签不重复推送」）"
+        type: boolean
+        default: false
 
 # 串行：同时只有一条运行，其余排队，避免 cron-job 触发与 schedule 兜底并发签到
 concurrency:
@@ -29,7 +34,12 @@ jobs:
       - name: Run daily checkin
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
-        run: python wb_daily.py wb_tokens.json
+        run: |
+          if [ "${{ inputs.force_push }}" = "true" ]; then
+            python wb_daily.py wb_tokens.json --force-push
+          else
+            python wb_daily.py wb_tokens.json
+          fi
 
       - name: Remove tokens
         if: always()
