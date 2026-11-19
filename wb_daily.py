@@ -247,7 +247,7 @@ def display_name(r):
     return "%s（%s）" % (n, r["phone"]) if r.get("phone") else n
 
 
-def feishu_push(results):
+def feishu_push(results, force=False):
     """把签到汇总推送到飞书群机器人，返回 (ok, note)。"""
     if not FEISHU_WEBHOOK:
         print("skip push: FEISHU_WEBHOOK not configured")
@@ -260,7 +260,8 @@ def feishu_push(results):
             warns.append("%s 的登录令牌将于 %s 过期（剩 %.1f 天）" % (
                 display_name(r), t.get("exp"), t["days_left"]))
     # 全部账号均为「今日已签」且无异常、无预警时跳过推送，避免 GitHub schedule 兜底运行造成重复推送
-    if results and not warns and all(r.get("status") == "ok" and r.get("action") != "checked_in" for r in results):
+    # force=True 时跳过「今日已签不重复推送」的判断，用于手动自测
+    if results and not force and not warns and all(r.get("status") == "ok" and r.get("action") != "checked_in" for r in results):
         print("skip push: all accounts already checked in today")
         return False, "skipped (all already checked in)"
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %A")
@@ -315,16 +316,21 @@ def feishu_push(results):
         return False, str(e)[:120]
 
 def main():
-    accs = json.load(open(sys.argv[1], encoding="utf-8"))
+    args = sys.argv[1:]
+    if not args:
+        print("用法: python wb_daily.py <tokens.json> [--no-push] [--force-push]")
+        return 2
+    accs = json.load(open(args[0], encoding="utf-8"))
     results = [run_account(a) for a in accs]
     print(json.dumps(results, ensure_ascii=False, indent=1))
     # 推送飞书（推送失败不影响签到结果本身）
-    if len(sys.argv) > 2 and sys.argv[2] == "--no-push":
+    if "--no-push" in args:
         push = {"ok": False, "note": "skipped (--no-push)"}
     else:
-        ok, note = feishu_push(results)
+        ok, note = feishu_push(results, force="--force-push" in args)
         push = {"ok": ok, "note": note}
     print(json.dumps({"feishu_push": push}, ensure_ascii=False))
+    return 0
 
 if __name__ == "__main__":
     main()
