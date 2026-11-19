@@ -117,6 +117,34 @@ def travel_flow(token):
         info["note"] = "今日派遣次数已用完"
     return info
 
+def _count(v):
+    """同客户端 toCount()：Number(v) 有限且 >0 才计入，否则按 0。"""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if n != n or n in (float("inf"), float("-inf")) or n <= 0:
+        return 0.0
+    return n
+
+
+def fetch_balance(token):
+    """真实剩余积分：各资格包 CycleRemainCapacity 之和。
+
+    与桌面端「剩余积分」完全同源（/billing/meter/get-user-resource-summary →
+    parseResourceSummary → sumSummaryCapacity）。注意：checkin-activity-status 里的
+    total_credits 是「累计签到所得」，不是余额，不能直接当余额用。
+    返回 (dict|None, 错误说明)。
+    """
+    sc, r = api(CHECKIN_HOST + "/billing/meter/get-user-resource-summary", token, body={})
+    if sc != 200 or not isinstance(r.get("data"), dict):
+        return None, "HTTP %s" % sc
+    packs = [p for p in (r["data"].get("Packages") or []) if isinstance(p, dict)]
+    total = sum(_count(p.get("CycleTotalCapacity")) for p in packs)
+    left = sum(_count(p.get("CycleRemainCapacity")) for p in packs)
+    return {"left": round(left, 2), "total": round(total, 2), "packages": len(packs)}, ""
+
+
 def run_account(acc):
     uid, token = acc.get("uid", "?"), acc.get("accessToken", "")
     out = {"uid": uid, "status": "error", "msg": ""}
@@ -139,7 +167,8 @@ def run_account(acc):
         if any(w in k.lower() for w in ("expire", "expiry", "deadline")):
             out.setdefault("expire_fields", {})[k] = v
     out["streak"] = sd.get("streak_days")
-    out["balance"] = sd.get("total_credits")
+    # 注意：这是「累计签到所得」，不是余额。真实余额走 get-user-resource-summary，见文末。
+    out["cumulative_credits"] = sd.get("total_credits")
     if sd.get("today_checked_in"):
         out["status"] = "ok"
         out["action"] = "skip_already_signed"
@@ -151,7 +180,6 @@ def run_account(acc):
             out["status"] = "ok"
             out["action"] = "checked_in"
             out["points"] = cd.get("daily_credit", sd.get("daily_credit"))
-            out["balance"] = cd.get("total_credits", out["balance"])
         elif cc == 200 and c.get("code") == 10001:
             out["status"] = "ok"
             out["action"] = "skip_already_signed"
@@ -163,6 +191,15 @@ def run_account(acc):
         out["travel"] = travel_flow(token)
     except Exception as e:
         out["travel"] = {"state": "error", "note": str(e)[:100]}
+    # 余额放在最后取：签到时点和旅行奖励都已结算，拿到的是真实剩余
+    bal, berr = fetch_balance(token)
+    if bal:
+        out["balance"] = bal["left"]
+        out["balance_total"] = bal["total"]
+        out["balance_packages"] = bal["packages"]
+    else:
+        out["balance"] = sd.get("total_credits")
+        out["balance_note"] = "真实余额查询失败(%s)，暂回退为累计签到积分" % berr
     return out
 
 def feishu_push(results):
@@ -204,8 +241,9 @@ def feishu_push(results):
                 ttxt = "🐱待出发"
             else:
                 ttxt = "🐱%s" % (tstate or "未知")
-            lines.append("%d. %s：%s（连续%s天）｜余额 %s｜%s" % (
-                i, name, acttxt, r.get("streak", "?"), r.get("balance", "?"), ttxt))
+            lines.append("%d. %s：%s（连续%s天）｜余额 %s%s｜%s" % (
+                i, name, acttxt, r.get("streak", "?"), r.get("balance", "?"),
+                "（累计值，真实余额查询失败）" if r.get("balance_note") else "", ttxt))
         else:
             msg = r.get("msg") or "未知错误"
             lines.append("%d. %s：❌ %s" % (i, name, msg))
