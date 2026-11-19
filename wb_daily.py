@@ -241,6 +241,17 @@ def run_account(acc):
         out["balance_note"] = "真实余额查询失败(%s)，暂回退为累计签到积分" % berr
     return out
 
+def fmt_num(v):
+    """整数不带小数点，小数保留两位（2149.0 -> 2149，1447.62 -> 1447.62）。"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v if v is not None else "?")
+    if abs(f - round(f)) < 1e-9:
+        return str(int(round(f)))
+    return "%.2f" % f
+
+
 def display_name(r):
     """优先用接口取到的真实昵称，其次内置昵称表，附脱敏手机号。"""
     n = (r.get("nickname") or "").strip() or acc_name(r.get("uid", "?"))
@@ -290,8 +301,8 @@ def feishu_push(results, force=False):
             cum = r.get("cumulative_credits")
             lines.append("%d. %s：%s（连续%s天）｜累计签到 %s｜剩余 %s%s｜%s" % (
                 i, name, acttxt, r.get("streak", "?"),
-                cum if cum is not None else "?",
-                r.get("balance", "?"),
+                fmt_num(cum) if cum is not None else "?",
+                fmt_num(r.get("balance")) if r.get("balance") is not None else "?",
                 "（累计值·真实余额查询失败）" if r.get("balance_note") else "", ttxt))
         else:
             msg = r.get("msg") or "未知错误"
