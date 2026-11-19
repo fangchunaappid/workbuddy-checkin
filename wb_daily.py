@@ -145,6 +145,37 @@ def fetch_balance(token):
     return {"left": round(left, 2), "total": round(total, 2), "packages": len(packs)}, ""
 
 
+def mask_phone(p):
+    """手机号脱敏：138****1234。"""
+    d = "".join(ch for ch in str(p or "") if ch.isdigit())
+    if len(d) >= 7:
+        return d[:3] + "****" + d[-4:]
+    return str(p or "")
+
+
+def fetch_profile(token, uid):
+    """真实账号名：GET /console/accounts（客户端同源接口）→ nickname / phoneNumber。
+    返回 {} 表示取不到，调用方回退到内置昵称表。"""
+    sc, r = api(CHECKIN_HOST + "/console/accounts", token)
+    if sc != 200:
+        return {}
+    data = r.get("data") if isinstance(r, dict) else None
+    accs = (data or {}).get("accounts") if isinstance(data, dict) else None
+    if not isinstance(accs, list) or not accs:
+        return {}
+    accs = [a for a in accs if isinstance(a, dict)]
+    pick = next((a for a in accs if str(a.get("uid") or "") == str(uid)), None)
+    if pick is None:
+        pick = next((a for a in accs if str(a.get("uid") or "").startswith(str(uid)[:8])), None)
+    if pick is None and len(accs) == 1:
+        pick = accs[0]
+    if not pick:
+        return {}
+    return {"nickname": str(pick.get("nickname") or "").strip(),
+            "phone": mask_phone(pick.get("phoneNumber") or pick.get("phone_number")),
+            "account_type": pick.get("type") or ""}
+
+
 def run_account(acc):
     uid, token = acc.get("uid", "?"), acc.get("accessToken", "")
     out = {"uid": uid, "status": "error", "msg": ""}
@@ -152,6 +183,14 @@ def run_account(acc):
     if not token:
         out["msg"] = "缺少 accessToken"
         return out
+    # 真实账号名 / 手机号（取不到就沿用内置昵称表）
+    try:
+        prof = fetch_profile(token, uid)
+    except Exception:
+        prof = {}
+    if prof:
+        out["nickname"] = prof.get("nickname")
+        out["phone"] = prof.get("phone")
     sc, s = api_status_retry(CHECKIN_HOST + "/billing/meter/checkin-activity-status", token)
     if sc != 200 or not isinstance(s.get("data"), dict):
         if sc == 401 and not is_gateway_error(sc, s):
@@ -202,6 +241,12 @@ def run_account(acc):
         out["balance_note"] = "真实余额查询失败(%s)，暂回退为累计签到积分" % berr
     return out
 
+def display_name(r):
+    """优先用接口取到的真实昵称，其次内置昵称表，附脱敏手机号。"""
+    n = (r.get("nickname") or "").strip() or acc_name(r.get("uid", "?"))
+    return "%s（%s）" % (n, r["phone"]) if r.get("phone") else n
+
+
 def feishu_push(results):
     """把签到汇总推送到飞书群机器人，返回 (ok, note)。"""
     if not FEISHU_WEBHOOK:
@@ -213,7 +258,7 @@ def feishu_push(results):
         t = r.get("token") or {}
         if t.get("days_left") is not None and t["days_left"] < 2:
             warns.append("%s 的登录令牌将于 %s 过期（剩 %.1f 天）" % (
-                acc_name(r.get("uid", "?")), t.get("exp"), t["days_left"]))
+                display_name(r), t.get("exp"), t["days_left"]))
     # 全部账号均为「今日已签」且无异常、无预警时跳过推送，避免 GitHub schedule 兜底运行造成重复推送
     if results and not warns and all(r.get("status") == "ok" and r.get("action") != "checked_in" for r in results):
         print("skip push: all accounts already checked in today")
@@ -222,7 +267,7 @@ def feishu_push(results):
     lines = ["📋 WorkBuddy 每日签到报告", "🗓 %s" % today, "——————————————"]
     errs = []
     for i, r in enumerate(results, 1):
-        name = acc_name(r.get("uid", "?"))
+        name = display_name(r)
         if r.get("status") == "ok":
             act = r.get("action")
             if act == "checked_in":
@@ -241,9 +286,12 @@ def feishu_push(results):
                 ttxt = "🐱待出发"
             else:
                 ttxt = "🐱%s" % (tstate or "未知")
-            lines.append("%d. %s：%s（连续%s天）｜余额 %s%s｜%s" % (
-                i, name, acttxt, r.get("streak", "?"), r.get("balance", "?"),
-                "（累计值，真实余额查询失败）" if r.get("balance_note") else "", ttxt))
+            cum = r.get("cumulative_credits")
+            lines.append("%d. %s：%s（连续%s天）｜累计签到 %s｜剩余 %s%s｜%s" % (
+                i, name, acttxt, r.get("streak", "?"),
+                cum if cum is not None else "?",
+                r.get("balance", "?"),
+                "（累计值·真实余额查询失败）" if r.get("balance_note") else "", ttxt))
         else:
             msg = r.get("msg") or "未知错误"
             lines.append("%d. %s：❌ %s" % (i, name, msg))
