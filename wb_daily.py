@@ -304,6 +304,9 @@ def feishu_push(results, force=False):
         lines.append("⚠️ 异常账号：%s，请关注！" % "、".join(errs))
     else:
         lines.append("🎉 全部账号签到流程执行完毕")
+    print("---- feishu message ----")
+    print("\n".join(lines))
+    print("-------------------------")
     payload = json.dumps({"msg_type": "text", "content": {"text": "\n".join(lines)}}).encode()
     req = urllib.request.Request(FEISHU_WEBHOOK, data=payload, method="POST",
                                  headers={"Content-Type": "application/json"})
